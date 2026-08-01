@@ -284,8 +284,8 @@ uint16_t EsFillDisplayBuffer(
     uint8_t cycles,
     uint16_t *out)
 {
-    int16_t norm_period[ES_PERIOD_POINTS];
-    uint16_t offset_period[ES_PERIOD_POINTS];
+    static int16_t norm_period[ES_PERIOD_POINTS];
+    static uint16_t offset_period[ES_PERIOD_POINTS];
     uint16_t i;
 
     if ((period == NULL) || (out == NULL) ||

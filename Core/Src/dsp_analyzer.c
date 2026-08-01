@@ -261,8 +261,8 @@ void DSP_Analyzer_Process(float32_t *raw_adc_buf,
 
     DSP_Analyzer_Init();
 
-    /* ---- 1. ADC 计数值 → mV 转换 ---- */
-    float32_t samples_mV[FFT_LEN];
+    /* ---- 1. ADC 计数值 → mV 转换 (static, 避免 4KB 栈溢出) ---- */
+    static float32_t samples_mV[FFT_LEN];
     for (i = 0; i < FFT_LEN; i++) {
         samples_mV[i] = raw_adc_buf[i] / ADC_MAX_COUNT * ADC_REF_MV;
     }

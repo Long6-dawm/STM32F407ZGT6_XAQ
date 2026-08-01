@@ -14,8 +14,10 @@
 
 #define SCREEN_CURVE_HEIGHT 210u
 #define SCREEN_WAVE_VISIBLE_POINTS 768u
-#define SCREEN_FFT_VISIBLE_POINTS 240u
-#define SCREEN_FFT_FREQ_MAX_HZ 500000u   /* FFT 横轴: 全宽 = 0~500kHz */
+#define SCREEN_FFT_VISIBLE_POINTS 768u
+#define SCREEN_FFT_FREQ_MAX_HZ 500000u   /* FFT 横轴上限(固定量程/自动量程的封顶) */
+#define SCREEN_FFT_AUTO_MAX_FACTOR_Q10 13u   /* 自动量程: 最高谐波频率 × 1.3 */
+#define SCREEN_FFT_AUTO_MIN_HZ 100000u       /* 自动量程: 全宽下限(防止低频时轴太窄) */
 
 #define SCREEN_DEFAULT_WAVE_PERIODS 3u
 

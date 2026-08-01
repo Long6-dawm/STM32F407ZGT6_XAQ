@@ -28,7 +28,7 @@ extern "C" {
 #define ADC_MAX_COUNT     1024.0f
 #define ADC_REF_MV        3300.0f
 
-#define SPECTRUM_MAX_POINTS 256u   /* 导出到屏幕的频谱点数 */
+#define SPECTRUM_MAX_POINTS 512u   /* 导出到屏幕的频谱点数(0~500kHz 全谱) */
 
 /* 类型定义 ----------------------------------------------------------------*/
 

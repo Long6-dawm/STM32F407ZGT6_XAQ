@@ -181,6 +181,9 @@ static void BuildScreenFrame(ScreenDataFrame *frame)
       frame->wave_count = count;
     }
   }
+
+  /* FFT 连续频谱数据 (0~500kHz, 512 点) 供屏幕频谱曲线显示 */
+  DSP_Analyzer_GetSpectrum(frame->fft, &frame->fft_count);
 }
 
 static void CaptureAndAnalyze(void)

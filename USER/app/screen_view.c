@@ -201,78 +201,54 @@ void ScreenView_ResetWaveScale(void)
 }
 
 
-/* FFT 离散线谱: 横轴 0~500kHz 线性, 谱线高度 ∝ 分量峰值幅度, 自动量程 */
+/* FFT 连续频谱: 512 点(0~500kHz) 线性映射到满宽, 高度 ∝ 幅度, 自动量程.
+ * 采用整条连续曲线(像 s_wave), 是 s_fft vscope 控件能可靠渲染的形式。 */
 static void ScreenView_RenderFft(const ScreenDataFrame *frame)
 {
   uint16_t line_pts = SCREEN_FFT_VISIBLE_POINTS;
-  uint32_t max_amp = 1u;
+  uint16_t src_count = frame->fft_count;
+  uint32_t max_mag = 1u;
   uint16_t i;
   static uint8_t s_pixel_buf[SCREEN_FFT_VISIBLE_POINTS];
 
-  /* 基线置底 */
+  if (src_count == 0u)
+  {
+    return;
+  }
+  if (src_count > SCREEN_FFT_MAX_POINTS)
+  {
+    src_count = SCREEN_FFT_MAX_POINTS;
+  }
+
+  /* 自动量程 */
+  for (i = 0u; i < src_count; i++)
+  {
+    if (frame->fft[i] > max_mag)
+    {
+      max_mag = frame->fft[i];
+    }
+  }
+  if (max_mag == 0u)
+  {
+    max_mag = 1u;
+  }
+
+  /* src_count 点 → 满宽线性插值, 高度 ∝ 幅度 */
   for (i = 0u; i < line_pts; i++)
   {
-    s_pixel_buf[i] = 0u;
-  }
+    float pos = (float)i * (float)(src_count - 1u) / (float)(line_pts - 1u);
+    uint32_t i0 = (uint32_t)pos;
+    uint32_t i1 = (i0 + 1u < src_count) ? (i0 + 1u) : i0;
+    float frac = pos - (float)i0;
+    uint32_t v = (uint32_t)((float)frame->fft[i0] * (1.0f - frac) +
+                            (float)frame->fft[i1] * frac + 0.5f);
+    uint32_t y = ((uint64_t)v * (uint32_t)(SCREEN_CURVE_HEIGHT - 2u)) / max_mag;
 
-  /* 自动量程: 取各有效分量的峰值幅度最大值 */
-  for (i = 0u; i < 3u; i++)
-  {
-    if (frame->harmonic_freq_mhz[i] != 0u)
+    if (y > SCREEN_CURVE_HEIGHT)
     {
-      uint32_t peak = ((uint32_t)frame->harmonic_rms_uv[i] * 14142u) / 10000u; /* rms*√2 */
-      if (peak > max_amp)
-      {
-        max_amp = peak;
-      }
+      y = SCREEN_CURVE_HEIGHT;
     }
-  }
-
-  /* 每条有效谱线: 在频率线性位置画尖峰 */
-  for (i = 0u; i < 3u; i++)
-  {
-    uint32_t freq_hz;
-    uint32_t peak;
-    uint16_t x;
-    uint16_t h;
-    int32_t k;
-
-    if (frame->harmonic_freq_mhz[i] == 0u)
-    {
-      continue;
-    }
-
-    freq_hz = frame->harmonic_freq_mhz[i] / 1000u;
-    peak = ((uint32_t)frame->harmonic_rms_uv[i] * 14142u) / 10000u;
-    h = (uint16_t)((uint64_t)peak * (uint32_t)(SCREEN_CURVE_HEIGHT - 2u)) / max_amp;
-    if (h > SCREEN_CURVE_HEIGHT)
-    {
-      h = SCREEN_CURVE_HEIGHT;
-    }
-
-    x = (uint16_t)((uint64_t)freq_hz * (uint32_t)(line_pts - 1u)) / SCREEN_FFT_FREQ_MAX_HZ;
-    if (x >= line_pts)
-    {
-      x = (uint16_t)(line_pts - 1u);
-    }
-
-    /* 尖峰: x-半宽 ~ x+半宽 */
-    for (k = -(int32_t)SCREEN_FFT_LINE_HALF_WIDTH; k <= (int32_t)SCREEN_FFT_LINE_HALF_WIDTH; k++)
-    {
-      int32_t idx = (int32_t)x + k;
-      if (idx < 0)
-      {
-        idx = 0;
-      }
-      if (idx >= (int32_t)line_pts)
-      {
-        idx = (int32_t)line_pts - 1;
-      }
-      if ((uint16_t)h > s_pixel_buf[(uint16_t)idx])
-      {
-        s_pixel_buf[(uint16_t)idx] = (uint8_t)h;
-      }
-    }
+    s_pixel_buf[i] = (uint8_t)y;
   }
 
   /* 每次清空重画, 防止曲线缓冲堆积/重复 */
@@ -308,6 +284,8 @@ void ScreenView_SetLinkState(uint8_t linked, uint32_t sequence)
 
 void ScreenView_RenderFrame(const ScreenDataFrame *frame, ScreenDisplayMode mode, ScreenWavePeriodMode periods)
 {
+  (void)mode;
+
   if (frame == NULL)
   {
     return;
@@ -315,13 +293,8 @@ void ScreenView_RenderFrame(const ScreenDataFrame *frame, ScreenDisplayMode mode
 
   ScreenView_SetWavePeriods(periods);
   ScreenView_RenderMeasurements(frame);
- 
-  if (mode == SCREEN_MODE_FFT)
-  {
-    ScreenView_RenderFft(frame);
-  }
-  else
-  {
-    ScreenView_RenderWave(frame, periods);
-  }
+
+  /* 时域波形始终刷新；FFT 离散谱线每帧同时刷新 (参考 AD9226 工程行为) */
+  ScreenView_RenderWave(frame, periods);
+  ScreenView_RenderFft(frame);
 }

@@ -88,7 +88,7 @@ void ScreenApp_Task(void)
 #if SCREEN_TEST_ENABLE
   if (s_frame.magic != SCREEN_FRAME_MAGIC)
   {
-    ScreenDataFrame test_frame;
+    static ScreenDataFrame test_frame;
     if (ScreenTest_Generate(now, s_mode, s_wave_periods, &test_frame))
     {
       ScreenApp_SetFrame(&test_frame);
