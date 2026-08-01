@@ -30,7 +30,7 @@
 #include "usart.h"
 #include "screen_app.h"
 #include "screen_config.h"
-#include "wave_render.h"
+#include "equivalent_sampling.h"
 #include <string.h>
 /* USER CODE END Includes */
 
@@ -52,11 +52,13 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint16_t AD_Value[1024];
+uint16_t AD_Value[ES_EQ_SAMPLE_COUNT];
 float32_t adc_value[1024];
 float32_t top1_freq = 0.0f, top1_amp = 0.0f;
 float32_t top2_freq = 0.0f, top2_amp = 0.0f;
 float32_t top3_freq = 0.0f, top3_amp = 0.0f;
+static int16_t s_signed[ES_EQ_SAMPLE_COUNT];
+static int16_t s_period[ES_PERIOD_POINTS];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -134,8 +136,36 @@ static void BuildScreenFrame(ScreenDataFrame *frame)
 
   frame->mode = (uint8_t)ScreenApp_GetDisplayMode();
   frame->wave_periods = (uint8_t)ScreenApp_GetWavePeriods();
-  frame->wave_count = WaveRender_Build(AD_Value, 1024u, f_fund,
-                                       (uint8_t)ScreenApp_GetWavePeriods(), frame->wave);
+
+  /* 等效采样重构单周期 → 填充屏幕波形 (1/3 周期) */
+  {
+    uint8_t cycles = (uint8_t)ScreenApp_GetWavePeriods();
+    bool ok = false;
+    uint32_t f0 = (f_fund > 0.0f) ? (uint32_t)(f_fund + 0.5f) : 0u;
+
+    if (f0 != 0u)
+    {
+      ok = EsReconstructPeriod(s_signed, ES_EQ_SAMPLE_COUNT, f0, 1000000u, s_period);
+    }
+    if (!ok && (f0 != 0u))
+    {
+      ok = NormalReconstructPeriod(s_signed, ES_EQ_SAMPLE_COUNT, f0, 1000000u, s_period);
+    }
+
+    if (ok)
+    {
+      frame->wave_count = EsFillDisplayBuffer(s_period, cycles, frame->wave);
+    }
+    else
+    {
+      /* 兜底: 无有效信号时输出原始缓冲前768点 */
+      uint16_t count = (ES_EQ_SAMPLE_COUNT < SCREEN_WAVE_MAX_POINTS)
+                     ? ES_EQ_SAMPLE_COUNT : SCREEN_WAVE_MAX_POINTS;
+      memcpy(frame->wave, AD_Value, (size_t)count * sizeof(uint16_t));
+      frame->wave_count = count;
+    }
+  }
+
   DSP_Analyzer_GetSpectrum(frame->fft, &frame->fft_count);
 }
 
@@ -143,12 +173,22 @@ static void CaptureAndAnalyze(void)
 {
   uint32_t i;
 
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)AD_Value, 1024);
-  HAL_Delay(3);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)AD_Value, ES_EQ_SAMPLE_COUNT);
+  HAL_Delay(5);
 
+  /* 前 1024 点转 float 给 DSP 测量频率/幅值 */
   for (i = 0u; i < 1024u; i++)
   {
     adc_value[i] = (float32_t)AD_Value[i];
+  }
+
+  /* 全部转 signed (以 2048 为零点), 供等效采样重构 */
+  for (i = 0u; i < ES_EQ_SAMPLE_COUNT; i++)
+  {
+    int32_t v = (int32_t)(AD_Value[i] & 0x0FFFU) - 2048L;
+    if (v < -32768L) { v = -32768L; }
+    else if (v > 32767L) { v = 32767L; }
+    s_signed[i] = (int16_t)v;
   }
 
   DSP_Analyzer_Process(adc_value,
@@ -198,7 +238,7 @@ int main(void)
 
   HAL_TIM_Base_Start(&htim3);
 
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)AD_Value, 1024);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)AD_Value, ES_EQ_SAMPLE_COUNT);
 
   HAL_Delay(500);
 
