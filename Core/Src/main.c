@@ -32,6 +32,7 @@
 #include "screen_config.h"
 #include "equivalent_sampling.h"
 #include <string.h>
+#include <math.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -113,7 +114,20 @@ static void BuildScreenFrame(ScreenDataFrame *frame)
 
   frame->frequency_mhz = (uint32_t)(f_fund * 1000.0f);
   frame->vpp_uv = (uint32_t)(amp_fund * 2000.0f);
-  frame->vrms_uv = (uint32_t)(amp_fund * 1000.0f / 1.41421356f);
+
+  /* Vrms = 基波和谐波幅值(峰值)的方均根: sqrt(Σ(amp_i/√2)^2) = sqrt(Σamp_i^2 / 2) */
+  {
+    float sum_sq = 0.0f;
+    uint8_t k;
+    for (k = 0u; k < 3u; k++)
+    {
+      if (freq[k] > 0.0f)
+      {
+        sum_sq += amp[k] * amp[k];
+      }
+    }
+    frame->vrms_uv = (uint32_t)(sqrtf(sum_sq / 2.0f) * 1000.0f);
+  }
 
   /* 谐波列表按频率升序 (冒泡排序, 忽略无效项) */
   for (i = 0u; i < 3u; i++)
@@ -195,7 +209,7 @@ static void CaptureAndAnalyze(void)
                        &top1_freq, &top1_amp,
                        &top2_freq, &top2_amp,
                        &top3_freq, &top3_amp);
-  top1_amp = top1_amp / 4.01f;
+  top1_amp = top1_amp / 4.8f;
   top2_amp = top2_amp / 4.01f;
   top3_amp = top3_amp / 4.01f;
 }
