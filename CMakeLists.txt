@@ -52,6 +52,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     USER/app/screen_app.c
     USER/app/screen_view.c
     USER/app/screen_test.c
+    USER/app/wave_render.c
 
     # CMSIS-DSP 源文件 (本机无预编译 .a, 按需编入所用函数及其依赖)
     # dsp_analyzer.c 用到: arm_rfft_fast_f32 / arm_rfft_fast_init_f32

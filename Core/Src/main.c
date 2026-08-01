@@ -27,6 +27,11 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "dsp_analyzer.h"
+#include "usart.h"
+#include "screen_app.h"
+#include "screen_config.h"
+#include "wave_render.h"
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -63,7 +68,97 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static uint32_t s_screen_sequence = 0u;
+static uint32_t s_last_measure_ms = 0u;
+static float s_fund_sm = 0.0f;
 
+static void BuildScreenFrame(ScreenDataFrame *frame)
+{
+  float f_fund = 0.0f, amp_fund = 0.0f;
+  float freq[3] = {top1_freq, top2_freq, top3_freq};
+  float amp[3]  = {top1_amp,  top2_amp,  top3_amp};
+  uint8_t i;
+
+  memset(frame, 0, sizeof(*frame));
+  frame->magic = SCREEN_FRAME_MAGIC;
+  frame->version = SCREEN_FRAME_VERSION;
+  frame->byte_len = sizeof(*frame);
+  frame->sequence = ++s_screen_sequence;
+
+  /* 基波 = 三个频率中最小且非零者 (含谐波时 top1 未必是基波) */
+  for (i = 0u; i < 3u; i++)
+  {
+    if ((freq[i] > 0.0f) && ((f_fund == 0.0f) || (freq[i] < f_fund)))
+    {
+      f_fund = freq[i];
+      amp_fund = amp[i];
+    }
+  }
+
+  /* 基频 EMA 平滑: 稳定 period_pts, 消除波形伸缩/相位漂移 */
+  if (f_fund > 0.0f)
+  {
+    if (s_fund_sm <= 0.0f)
+    {
+      s_fund_sm = f_fund;
+    }
+    else
+    {
+      s_fund_sm = 0.7f * s_fund_sm + 0.3f * f_fund;
+    }
+    f_fund = s_fund_sm;
+  }
+
+  frame->frequency_mhz = (uint32_t)(f_fund * 1000.0f);
+  frame->vpp_uv = (uint32_t)(amp_fund * 2000.0f);
+  frame->vrms_uv = (uint32_t)(amp_fund * 1000.0f / 1.41421356f);
+
+  /* 谐波列表按频率升序 (冒泡排序, 忽略无效项) */
+  for (i = 0u; i < 3u; i++)
+  {
+    uint8_t j;
+    for (j = 0u; j < (3u - i - 1u); j++)
+    {
+      if ((freq[j] > freq[j + 1u]) && (freq[j] > 0.0f) && (freq[j + 1u] > 0.0f))
+      {
+        float tf = freq[j]; freq[j] = freq[j + 1u]; freq[j + 1u] = tf;
+        float ta = amp[j];  amp[j]  = amp[j + 1u];  amp[j + 1u]  = ta;
+      }
+    }
+  }
+  for (i = 0u; i < 3u; i++)
+  {
+    frame->harmonic_freq_mhz[i] = (uint32_t)(freq[i] * 1000.0f);
+    frame->harmonic_rms_uv[i] = (uint32_t)(amp[i] * 1000.0f / 1.41421356f);
+  }
+
+  frame->mode = (uint8_t)ScreenApp_GetDisplayMode();
+  frame->wave_periods = (uint8_t)ScreenApp_GetWavePeriods();
+  frame->wave_count = WaveRender_Build(AD_Value, 1024u, f_fund,
+                                       (uint8_t)ScreenApp_GetWavePeriods(), frame->wave);
+  DSP_Analyzer_GetSpectrum(frame->fft, &frame->fft_count);
+}
+
+static void CaptureAndAnalyze(void)
+{
+  uint32_t i;
+
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)AD_Value, 1024);
+  HAL_Delay(3);
+
+  for (i = 0u; i < 1024u; i++)
+  {
+    adc_value[i] = (float32_t)AD_Value[i];
+  }
+
+  DSP_Analyzer_Process(adc_value,
+                       &top1_freq, &top1_amp,
+                       &top2_freq, &top2_amp,
+                       &top3_freq, &top3_amp);
+  top1_amp = top1_amp / 4.01f;
+  top2_amp = top2_amp / 4.01f;
+  top3_amp = top3_amp / 4.01f;
+}
 /* USER CODE END 0 */
 
 /**
@@ -98,6 +193,7 @@ int main(void)
   MX_DMA_Init();
   MX_ADC1_Init();
   MX_TIM3_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
   HAL_TIM_Base_Start(&htim3);
@@ -119,6 +215,8 @@ int main(void)
   top1_amp = top1_amp /4.01f;
   top2_amp = top2_amp /4.01f;
   top3_amp = top3_amp /4.01f;
+
+  ScreenApp_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -128,6 +226,18 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    ScreenDataFrame frame;
+    uint32_t now = HAL_GetTick();
+
+    ScreenApp_Task();
+
+    if ((now - s_last_measure_ms) >= SCREEN_REFRESH_INTERVAL_MS)
+    {
+      s_last_measure_ms = now;
+      CaptureAndAnalyze();
+      BuildScreenFrame(&frame);
+      ScreenApp_SetFrame(&frame);
+    }
   }
   /* USER CODE END 3 */
 }

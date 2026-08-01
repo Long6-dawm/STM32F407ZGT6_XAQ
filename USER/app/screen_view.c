@@ -128,17 +128,13 @@ static void ScreenView_RenderMeasurements(const ScreenDataFrame *frame)
 static void ScreenView_RenderWave(const ScreenDataFrame *frame, ScreenWavePeriodMode periods)
 {
   uint16_t visible_count = frame->wave_count;
-  uint16_t start = 0u;
   uint16_t points;
   uint16_t max_value;
   uint16_t i;
   static uint8_t s_pixel_buf[SCREEN_WAVE_VISIBLE_POINTS];
+  static uint16_t s_max_sm;
 
-  if ((periods == SCREEN_WAVE_PERIOD_1) && (frame->wave_count >= 3u))
-  {
-    visible_count = (uint16_t)(frame->wave_count / 3u);
-    start = 0u;
-  }
+  (void)periods;
 
   points = (visible_count < SCREEN_WAVE_VISIBLE_POINTS) ? visible_count : SCREEN_WAVE_VISIBLE_POINTS;
   if (points == 0u)
@@ -146,17 +142,26 @@ static void ScreenView_RenderWave(const ScreenDataFrame *frame, ScreenWavePeriod
     return;
   }
 
-  max_value = ScreenView_MaxU16(&frame->wave[start], visible_count);
-  for (i = 0u; i < points; i++)
+  max_value = ScreenView_MaxU16(frame->wave, visible_count);
+  /* 垂直幅度 EMA 平滑, 防止每帧最大幅值抖动导致上下跳动 */
+  if (s_max_sm == 0u)
   {
-    uint16_t src = (uint16_t)(start + i);
-    s_pixel_buf[i] = ScreenView_ScaleU16(frame->wave[src], max_value, SCREEN_WAVE_Y_OFFSET, SCREEN_WAVE_Y_GAIN_Q8, 0u);
+    s_max_sm = max_value;
+  }
+  else
+  {
+    s_max_sm = (uint16_t)(((uint32_t)s_max_sm * 7u + (uint32_t)max_value * 3u) / 10u);
+  }
+  if (s_max_sm == 0u)
+  {
+    s_max_sm = 1u;
   }
 
-  if (periods == SCREEN_WAVE_PERIOD_1)
+  for (i = 0u; i < points; i++)
   {
-    HMI_ClearWave(SCREEN_WAVE_CTRL, 255u);
+    s_pixel_buf[i] = ScreenView_ScaleU16(frame->wave[i], s_max_sm, SCREEN_WAVE_Y_OFFSET, SCREEN_WAVE_Y_GAIN_Q8, 0u);
   }
+
   HMI_Addt_Send(SCREEN_WAVE_CTRL, 0u, s_pixel_buf, points);
 }
 
