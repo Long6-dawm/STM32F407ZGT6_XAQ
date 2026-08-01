@@ -43,49 +43,49 @@ static void ScreenView_FormatMhz(uint32_t mhz, char *value, size_t value_size, c
   }
 }
 
-static uint8_t ScreenView_ScaleU16(uint16_t sample, uint16_t max_sample, int32_t offset, int32_t gain_q8, uint8_t invert)
+static uint16_t ScreenView_RangeU16(const uint16_t *data, uint16_t count, uint16_t *out_min)
 {
-  int32_t y;
-
-  if (max_sample == 0u)
-  {
-    max_sample = 1u;
-  }
-
-  y = (int32_t)(((uint32_t)sample * SCREEN_CURVE_HEIGHT) / max_sample);
-  if (invert != 0u)
-  {
-    y = (int32_t)SCREEN_CURVE_HEIGHT - y;
-  }
-
-  y = ((y * gain_q8) >> 8) + offset;
-  if (y < 0)
-  {
-    y = 0;
-  }
-  if (y > (int32_t)SCREEN_CURVE_HEIGHT)
-  {
-    y = (int32_t)SCREEN_CURVE_HEIGHT;
-  }
-
-  return (uint8_t)y;
-}
-
-static uint16_t ScreenView_MaxU16(const uint16_t *data, uint16_t count)
-{
-  uint16_t max_value = 1u;
+  uint16_t min_value;
+  uint16_t max_value;
   uint16_t i;
 
-  for (i = 0u; i < count; i++)
+  if (count == 0u)
   {
+    if (out_min != NULL)
+    {
+      *out_min = 0u;
+    }
+    return 1u;
+  }
+
+  min_value = data[0];
+  max_value = data[0];
+  for (i = 1u; i < count; i++)
+  {
+    if (data[i] < min_value)
+    {
+      min_value = data[i];
+    }
     if (data[i] > max_value)
     {
       max_value = data[i];
     }
   }
 
-  return max_value;
+  if (out_min != NULL)
+  {
+    *out_min = min_value;
+  }
+  if (max_value == min_value)
+  {
+    max_value = min_value + 1u;
+  }
+  return (uint16_t)(max_value - min_value);
 }
+
+/* 波形 Y 轴自动量程的平滑状态 (文件级, 供 ResetWaveScale 重置) */
+static uint32_t s_wave_range_sm;
+static uint32_t s_wave_min_sm;
 
 static void ScreenView_RenderMeasurements(const ScreenDataFrame *frame)
 {
@@ -129,12 +129,11 @@ static void ScreenView_RenderWave(const ScreenDataFrame *frame, ScreenWavePeriod
 {
   uint16_t visible_count = frame->wave_count;
   uint16_t points;
-  uint16_t max_value;
+  uint16_t min_value;
+  uint16_t range;
   uint16_t i;
   static uint8_t s_pixel_buf[SCREEN_WAVE_VISIBLE_POINTS];
-  static uint16_t s_max_sm;
-
-  (void)periods;
+  static uint8_t s_last_periods;
 
   points = (visible_count < SCREEN_WAVE_VISIBLE_POINTS) ? visible_count : SCREEN_WAVE_VISIBLE_POINTS;
   if (points == 0u)
@@ -142,48 +141,143 @@ static void ScreenView_RenderWave(const ScreenDataFrame *frame, ScreenWavePeriod
     return;
   }
 
-  max_value = ScreenView_MaxU16(frame->wave, visible_count);
-  /* 垂直幅度 EMA 平滑, 防止每帧最大幅值抖动导致上下跳动 */
-  if (s_max_sm == 0u)
+  /* 动态范围(min-max)归一化 + 居中: 峰峰铺满曲线, 上下留边距 */
+  range = ScreenView_RangeU16(frame->wave, visible_count, &min_value);
+
+  /* 范围与最小值的 EMA 平滑, 防止每帧抖动导致波形上下平移/缩放"呼吸" */
+  if (s_wave_range_sm == 0u)
   {
-    s_max_sm = max_value;
+    s_wave_range_sm = range;
+    s_wave_min_sm = min_value;
   }
   else
   {
-    s_max_sm = (uint16_t)(((uint32_t)s_max_sm * 7u + (uint32_t)max_value * 3u) / 10u);
+    s_wave_range_sm = (s_wave_range_sm * 7u + (uint32_t)range * 3u) / 10u;
+    s_wave_min_sm = (s_wave_min_sm * 7u + (uint32_t)min_value * 3u) / 10u;
   }
-  if (s_max_sm == 0u)
+  if (s_wave_range_sm == 0u)
   {
-    s_max_sm = 1u;
+    s_wave_range_sm = 1u;
   }
 
   for (i = 0u; i < points; i++)
   {
-    s_pixel_buf[i] = ScreenView_ScaleU16(frame->wave[i], s_max_sm, SCREEN_WAVE_Y_OFFSET, SCREEN_WAVE_Y_GAIN_Q8, 0u);
+    int32_t d = (int32_t)frame->wave[i] - (int32_t)s_wave_min_sm;
+    int32_t y;
+    int32_t y_adj;
+
+    if (d < 0)
+    {
+      d = 0;
+    }
+    y = ((int32_t)((uint32_t)d * (SCREEN_CURVE_HEIGHT - 20u)) / (int32_t)s_wave_range_sm) + 10;
+    y_adj = (((int32_t)y * SCREEN_WAVE_Y_GAIN_Q8) >> 8) + SCREEN_WAVE_Y_OFFSET;
+
+    if (y_adj < 0)
+    {
+      y_adj = 0;
+    }
+    if (y_adj > (int32_t)SCREEN_CURVE_HEIGHT)
+    {
+      y_adj = (int32_t)SCREEN_CURVE_HEIGHT;
+    }
+    s_pixel_buf[i] = (uint8_t)y_adj;
+  }
+
+  /* 切换显示周期数时清屏, 避免残留上一模式的波形 */
+  if (periods != (ScreenWavePeriodMode)s_last_periods)
+  {
+    s_last_periods = (uint8_t)periods;
+    HMI_ClearWave(SCREEN_WAVE_CTRL, 255u);
   }
 
   HMI_Addt_Send(SCREEN_WAVE_CTRL, 0u, s_pixel_buf, points);
 }
 
+void ScreenView_ResetWaveScale(void)
+{
+  s_wave_range_sm = 0u;
+  s_wave_min_sm = 0u;
+}
 
+
+/* FFT 离散线谱: 横轴 0~500kHz 线性, 谱线高度 ∝ 分量峰值幅度, 自动量程 */
 static void ScreenView_RenderFft(const ScreenDataFrame *frame)
 {
-  uint16_t points = (frame->fft_count < SCREEN_FFT_VISIBLE_POINTS) ? frame->fft_count : SCREEN_FFT_VISIBLE_POINTS;
-  uint16_t max_value = ScreenView_MaxU16(frame->fft, frame->fft_count);
+  uint16_t line_pts = SCREEN_FFT_VISIBLE_POINTS;
+  uint32_t max_amp = 1u;
   uint16_t i;
   static uint8_t s_pixel_buf[SCREEN_FFT_VISIBLE_POINTS];
 
-  if (points == 0u)
+  /* 基线置底 */
+  for (i = 0u; i < line_pts; i++)
   {
-    return;
+    s_pixel_buf[i] = 0u;
   }
 
-  for (i = 0u; i < points; i++)
+  /* 自动量程: 取各有效分量的峰值幅度最大值 */
+  for (i = 0u; i < 3u; i++)
   {
-    uint16_t src = (uint16_t)(((uint32_t)i * frame->fft_count) / points);
-    s_pixel_buf[i] = ScreenView_ScaleU16(frame->fft[src], max_value, SCREEN_FFT_Y_OFFSET, SCREEN_FFT_Y_GAIN_Q8, 0u);
+    if (frame->harmonic_freq_mhz[i] != 0u)
+    {
+      uint32_t peak = ((uint32_t)frame->harmonic_rms_uv[i] * 14142u) / 10000u; /* rms*√2 */
+      if (peak > max_amp)
+      {
+        max_amp = peak;
+      }
+    }
   }
-  HMI_Addt_Send(SCREEN_FFT_CTRL, 0u, s_pixel_buf, points);
+
+  /* 每条有效谱线: 在频率线性位置画尖峰 */
+  for (i = 0u; i < 3u; i++)
+  {
+    uint32_t freq_hz;
+    uint32_t peak;
+    uint16_t x;
+    uint16_t h;
+    int32_t k;
+
+    if (frame->harmonic_freq_mhz[i] == 0u)
+    {
+      continue;
+    }
+
+    freq_hz = frame->harmonic_freq_mhz[i] / 1000u;
+    peak = ((uint32_t)frame->harmonic_rms_uv[i] * 14142u) / 10000u;
+    h = (uint16_t)((uint64_t)peak * (uint32_t)(SCREEN_CURVE_HEIGHT - 2u)) / max_amp;
+    if (h > SCREEN_CURVE_HEIGHT)
+    {
+      h = SCREEN_CURVE_HEIGHT;
+    }
+
+    x = (uint16_t)((uint64_t)freq_hz * (uint32_t)(line_pts - 1u)) / SCREEN_FFT_FREQ_MAX_HZ;
+    if (x >= line_pts)
+    {
+      x = (uint16_t)(line_pts - 1u);
+    }
+
+    /* 尖峰: x-半宽 ~ x+半宽 */
+    for (k = -(int32_t)SCREEN_FFT_LINE_HALF_WIDTH; k <= (int32_t)SCREEN_FFT_LINE_HALF_WIDTH; k++)
+    {
+      int32_t idx = (int32_t)x + k;
+      if (idx < 0)
+      {
+        idx = 0;
+      }
+      if (idx >= (int32_t)line_pts)
+      {
+        idx = (int32_t)line_pts - 1;
+      }
+      if ((uint16_t)h > s_pixel_buf[(uint16_t)idx])
+      {
+        s_pixel_buf[(uint16_t)idx] = (uint8_t)h;
+      }
+    }
+  }
+
+  /* 每次清空重画, 防止曲线缓冲堆积/重复 */
+  HMI_ClearWave(SCREEN_FFT_CTRL, 255u);
+  HMI_Addt_Send(SCREEN_FFT_CTRL, 0u, s_pixel_buf, line_pts);
 }
 
 void ScreenView_Init(void)

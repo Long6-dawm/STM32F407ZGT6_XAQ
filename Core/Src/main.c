@@ -30,6 +30,7 @@
 #include "usart.h"
 #include "screen_app.h"
 #include "screen_config.h"
+#include "screen_view.h"
 #include "equivalent_sampling.h"
 #include <string.h>
 #include <math.h>
@@ -98,12 +99,13 @@ static void BuildScreenFrame(ScreenDataFrame *frame)
     }
   }
 
-  /* 基频 EMA 平滑: 稳定 period_pts, 消除波形伸缩/相位漂移 */
+  /* 基频 EMA 平滑; 检测到频率跳变时立即重置, 保证切换频率后 <2s 内显示正确 */
   if (f_fund > 0.0f)
   {
-    if (s_fund_sm <= 0.0f)
+    if ((s_fund_sm <= 0.0f) || (fabsf(f_fund - s_fund_sm) > 0.002f * f_fund))
     {
       s_fund_sm = f_fund;
+      ScreenView_ResetWaveScale();
     }
     else
     {
@@ -179,8 +181,6 @@ static void BuildScreenFrame(ScreenDataFrame *frame)
       frame->wave_count = count;
     }
   }
-
-  DSP_Analyzer_GetSpectrum(frame->fft, &frame->fft_count);
 }
 
 static void CaptureAndAnalyze(void)
@@ -209,9 +209,9 @@ static void CaptureAndAnalyze(void)
                        &top1_freq, &top1_amp,
                        &top2_freq, &top2_amp,
                        &top3_freq, &top3_amp);
-  top1_amp = top1_amp / 4.8f;
-  top2_amp = top2_amp / 4.01f;
-  top3_amp = top3_amp / 4.01f;
+  top1_amp = top1_amp ;
+  top2_amp = top2_amp ;
+  top3_amp = top3_amp ;
 }
 /* USER CODE END 0 */
 
@@ -251,26 +251,20 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   HAL_TIM_Base_Start(&htim3);
+  HAL_Delay(100);
 
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)AD_Value, ES_EQ_SAMPLE_COUNT);
-
-  HAL_Delay(500);
-
-  for(uint32_t i = 0; i < 1024; i++)
-  {
-      adc_value[i] = (float32_t)AD_Value[i];
-  }
-
-  DSP_Analyzer_Process(adc_value,
-                          &top1_freq, &top1_amp,
-                          &top2_freq, &top2_amp,
-                          &top3_freq, &top3_amp);
-  //幅度修正
-  top1_amp = top1_amp /4.01f;
-  top2_amp = top2_amp /4.01f;
-  top3_amp = top3_amp /4.01f;
+  /* 首次采集 + 分析 + 重构缓冲填充 */
+  CaptureAndAnalyze();
+  s_last_measure_ms = HAL_GetTick();
 
   ScreenApp_Init();
+
+  /* 上电提交初始帧, 避免黑屏/测试数据 */
+  {
+    ScreenDataFrame init_frame;
+    BuildScreenFrame(&init_frame);
+    ScreenApp_SetFrame(&init_frame);
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -285,6 +279,7 @@ int main(void)
 
     ScreenApp_Task();
 
+    /* 定期采集 + 分析 + 重构 + 刷新屏幕 */
     if ((now - s_last_measure_ms) >= SCREEN_REFRESH_INTERVAL_MS)
     {
       s_last_measure_ms = now;
