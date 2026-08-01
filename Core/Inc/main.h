@@ -59,7 +59,8 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 
 /* USER CODE BEGIN Private defines */
-
+#define Single_MCU_Pin GPIO_PIN_15
+#define Single_MCU_GPIO_Port GPIOA
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

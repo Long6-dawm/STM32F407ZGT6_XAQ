@@ -46,6 +46,12 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/dsp_analyzer.c
+    Core/Src/usart.c
+    USER/drivers/hmi_tjc.c
+    USER/bsp/screen_key.c
+    USER/app/screen_app.c
+    USER/app/screen_view.c
+    USER/app/screen_test.c
 
     # CMSIS-DSP 源文件 (本机无预编译 .a, 按需编入所用函数及其依赖)
     # dsp_analyzer.c 用到: arm_rfft_fast_f32 / arm_rfft_fast_init_f32
@@ -70,6 +76,11 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Drivers/CMSIS/DSP/Include
     # CMSIS-DSP 私有头文件 (arm_vec_fft.h 等, 被 arm_cfft_f32.c / arm_cfft_init_f32.c 引用)
     Drivers/CMSIS/DSP/PrivateInclude
+    USER/config
+    USER/protocol
+    USER/drivers
+    USER/bsp
+    USER/app
 )
 
 # Add project symbols (macros)

@@ -28,6 +28,8 @@ extern "C" {
 #define ADC_MAX_COUNT     1024.0f
 #define ADC_REF_MV        3300.0f
 
+#define SPECTRUM_MAX_POINTS 256u   /* 导出到屏幕的频谱点数 */
+
 /* 类型定义 ----------------------------------------------------------------*/
 
 /** 频谱分量结构体 */
@@ -69,6 +71,14 @@ void DSP_Analyzer_Process(float32_t *raw_adc_buf,
                           float32_t *out_freq1, float32_t *out_amp1,
                           float32_t *out_freq2, float32_t *out_amp2,
                           float32_t *out_freq3, float32_t *out_amp3);
+
+/**
+ * @brief  导出最近一次分析得到的 FFT 幅度谱 (供串口屏频谱显示)
+ * @param  out       输出 uint16 幅度数组, 至少 SPECTRUM_MAX_POINTS 长度
+ * @param  out_count 输出实际点数 (<= SPECTRUM_MAX_POINTS)
+ * @note   需先调用 DSP_Analyzer_Process 后才有效
+ */
+void DSP_Analyzer_GetSpectrum(uint16_t *out, uint16_t *out_count);
 
 #ifdef __cplusplus
 }

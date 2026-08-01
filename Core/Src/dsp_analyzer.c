@@ -327,3 +327,34 @@ void DSP_Analyzer_Process(float32_t *raw_adc_buf,
         *out_amp3  = 0.0f;
     }
 }
+
+/**
+ * @brief 导出 FFT 幅度谱 (截取前 SPECTRUM_MAX_POINTS 点, 转 uint16)
+ */
+void DSP_Analyzer_GetSpectrum(uint16_t *out, uint16_t *out_count)
+{
+    uint16_t n;
+    uint16_t i;
+
+    if ((out == NULL) || (out_count == NULL)) {
+        return;
+    }
+
+    n = (uint16_t)(FFT_LEN / 2u);
+    if (n > SPECTRUM_MAX_POINTS) {
+        n = SPECTRUM_MAX_POINTS;
+    }
+
+    for (i = 0u; i < n; i++) {
+        float32_t v = fft_mag_buffer[i];
+        if (v < 0.0f) {
+            v = 0.0f;
+        }
+        if (v > 65535.0f) {
+            v = 65535.0f;
+        }
+        out[i] = (uint16_t)v;
+    }
+
+    *out_count = n;
+}
