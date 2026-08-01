@@ -115,6 +115,10 @@ int main(void)
                           &top1_freq, &top1_amp,
                           &top2_freq, &top2_amp,
                           &top3_freq, &top3_amp);
+  //幅度修正
+  top1_amp = top1_amp /4.03f;
+  top2_amp = top2_amp /4.0f;
+  top3_amp = top3_amp /4.0f;
   /* USER CODE END 2 */
 
   /* Infinite loop */

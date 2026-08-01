@@ -20,7 +20,7 @@
         }
     ],
     "liveWatch": {
-    "enabled": true,
-    "samplesPerSecond": 8
+        "enabled": true,
+        "samplesPerSecond": 8
 }
 }
